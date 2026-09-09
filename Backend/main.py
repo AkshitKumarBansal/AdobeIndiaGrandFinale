@@ -79,7 +79,12 @@ os.makedirs(SESSION_FILES_DIR, exist_ok=True)
 # --- Add CORS Middleware ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8080"], # Allow both dev and prod ports
+    allow_origins=[
+        "http://localhost:3000", 
+        "http://localhost:8080",
+        "http://localhost:5173",
+        "https://auth-frontend-a6x9.onrender.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -101,9 +106,19 @@ async def startup_event():
 # ==============================================================================
 # Authentication Dependency
 # ==============================================================================
-async def get_current_user(authorization: str = Header(...)):
+async def get_current_user(
+    authorization: str = Header(None), 
+    x_microservice_key: str = Header(None)
+):
+    # VIP ENTRANCE: If the request comes from your new dashboard with the secret key
+    expected_key = os.environ.get("MICROSERVICE_API_KEY", "my_super_secret_dashboard_key_123")
+    if x_microservice_key == expected_key:
+        return {"email": "microservice@dashboard.local", "name": "Dashboard System"}
+
+    # STANDARD ENTRANCE: The original standalone app authentication
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header missing")
+    
     user_email = authorization
     user = get_user(user_email)
     if user is None:
@@ -425,32 +440,43 @@ def text_to_speech_offline(text: str, output_filename: str):
         return False
 
 # ==============================================================================
-# React Static Files & Catch-all Route (MUST BE LAST)
+# React Static Files & Catch-all Route (UPDATED FOR DUAL-MODE)
 # ==============================================================================
-# This serves the static files for the React frontend
-app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
+import os
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
-# This serves the user-uploaded session files (PDFs)
+# 1. Dynamically calculate the path to the original standalone Frontend folder
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_BUILD_DIR = os.path.join(BASE_DIR, "..", "Frontend", "build")
+STATIC_DIR = os.path.join(FRONTEND_BUILD_DIR, "static")
+
+# 2. Only mount the static UI if it actually exists to prevent crashes!
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+else:
+    print(f"WARNING: Standalone UI folder not found at {STATIC_DIR}. API will still run.")
+
 app.mount("/session_files", StaticFiles(directory=SESSION_FILES_DIR), name="session_files")
-
 
 @app.get("/{full_path:path}")
 async def serve_react_app(full_path: str):
-    """
-    Serves the React app. Catches all paths not matched by API routes.
-    """
-    build_dir = os.path.join("frontend", "build")
-    file_path = os.path.join(build_dir, full_path)
+    """Serves the standalone React app if built, otherwise returns 404 safely."""
+    file_path = os.path.join(FRONTEND_BUILD_DIR, full_path)
     if os.path.exists(file_path) and os.path.isfile(file_path):
         return FileResponse(file_path)
-    index_path = os.path.join(build_dir, "index.html")
-    return FileResponse(index_path)
+    
+    index_path = os.path.join(FRONTEND_BUILD_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    
+    return JSONResponse(status_code=404, content={"error": "Standalone frontend not built."})
 
 @app.get("/")
 def read_root():
-    # This will now be handled by the catch-all route, but it's good practice
-    # to have a root endpoint for API health checks.
-    index_path = os.path.join("frontend", "build", "index.html")
+    index_path = os.path.join(FRONTEND_BUILD_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
-    return {"status": "ok", "version": app.version}
+    
+    # If the standalone UI isn't built, show a friendly API health message
+    return {"status": "ok", "version": app.version, "mode": "Microservice Active"}
