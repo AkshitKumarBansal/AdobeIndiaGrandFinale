@@ -1,129 +1,70 @@
-# --- General ---
-# Ignore OS-specific files
+# ==========================================
+# 1. GENERAL & OS FILES
+# ==========================================
 .DS_Store
 Thumbs.db
+*.lnk
 
-# Ignore sensitive environment files.
-# Use .env.example to show what variables are needed.
+# ==========================================
+# 2. ENVIRONMENT & SECRETS
+# ==========================================
+# Never commit your API keys or database passwords!
 .env
-.env.*
-
-# Ignore log files
-*.log
-logs/
-*.log.*
-
-
-# --- Frontend (React - create-react-app) ---
-# Ignore the massive node_modules folder
-/src/node_modules
-/node_modules
-
-# Ignore build output directory
-/src/build
-/build
-
-# Ignore test coverage directory
-/src/coverage
-/coverage
-
-# Ignore local environment variables specific to your machine
-/src/.env.local
-/src/.env.development.local
-/src/.env.test.local
-/src/.env.production.local
-
-# Ignore package manager lock files if you want everyone to use the same versions
-# (optional, you can comment these out if your team uses different package managers)
-# yarn.lock
-# package-lock.json
-
-
-# --- Backend (Python / FastAPI) ---
-# Ignore Python virtual environment folders
-/Backend/venv/
-/Backend/env/
-/Backend/.venv/
-/Backend/.env/
-
-# Ignore Python bytecode and cache
-/Backend/__pycache__/
-/Backend/**/*.pyc
-
-# Ignore distribution and build artifacts
-/Backend/build/
-/Backend/dist/
-/Backend/*.egg-info/
-
-# Ignore downloaded machine learning models
-/Backend/model/
-
-# Ignore temporary directories created by the API
-/Backend/temp_*/
-
-# Ignore generated output files that are not part of the repo
-/Backend/output/
-/Backend/*.mp3
-
-# Ignore IDE-specific settings
-/Backend/.vscode/
-/Backend/.idea/
-
-/model/
-
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
-
-# testing
-/coverage
-
-# production
-/build
-
-# misc
-.DS_Store
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+*.pem
 
+# ==========================================
+# 3. LOGS
+# ==========================================
+*.log
+logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# ==========================================
+# 4. FRONTEND (React / Node)
+# ==========================================
 # Dependencies
-/node_modules
-
-# Production build
-/build
-
-# Environment variables (VERY IMPORTANT)
-.env
-.env.local
-
-# Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Python virtual environment
-/venv/
-# General
-.env
-.DS_Store
-
-# Backend (Python)
-venv/
-__pycache__/
-*.pyc
-model/
-temp_*/
-
-# Frontend (React)
 node_modules/
+.pnp
+.pnp.js
+
+# Production & Testing
 build/
-.npm
-npm-debug.log*
+coverage/
+.npm/
+
+# ==========================================
+# 5. BACKEND (Python / FastAPI)
+# ==========================================
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build / Distribution
+dist/
+*.egg-info/
+
+# Project-Specific Assets & Temp Files
+# (Do not commit user session data, PDFs, or generated MP3s)
+session_files/
+temp_*/
+output/
+model/
+*.mp3
+
+# ==========================================
+# 6. IDEs & EDITORS
+# ==========================================
+.vscode/
+.idea/

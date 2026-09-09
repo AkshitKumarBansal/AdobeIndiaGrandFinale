@@ -898,7 +898,7 @@ import { useTheme } from "../contexts/ThemeContext";
 import { getPdfChatStyles } from "../styles/appStyles";
 import SessionHistorySidebar from "../components/chat/SessionHistorySidebar";
 import ChatAndAnalysisSection from "../components/chat/ChatAndAnalysisSection";
-import PdfViewer from "../PdfViewer";
+import PdfViewer from "../components/common/PdfViewer";
 import apiClient from "../api/apiClient";
 
 const PdfChatPage = ({ userToken }) => {

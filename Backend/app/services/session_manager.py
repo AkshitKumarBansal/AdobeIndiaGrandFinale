@@ -5,8 +5,8 @@ import uuid
 import logging
 from typing import List, Dict, Any, Optional
 
-from redis_client import get_redis_client
-from auth import verify_password
+from app.services.redis_client import get_redis_client
+from app.core.auth import verify_password
 
 # --- Constants for Redis Keys ---
 SESSION_META_PREFIX = "session:meta:"

@@ -1,7 +1,7 @@
 // src/PdfViewer.js
 
 import React, { useEffect, useRef } from 'react';
-import { useAdobeSdk } from './useAdobeSdk';
+import { useAdobeSdk } from '../../hooks/useAdobeSdk';
 
 const PdfViewer = ({ filePromise, fileName, pageNumber, onTextSelect }) => {
   const viewerRef = useRef(null);
