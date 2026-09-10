@@ -7,7 +7,8 @@ const apiClient = axios.create({
 // Function to set the authorization token for all subsequent requests
 export const setAuthToken = (token) => {
   if (token) {
-    apiClient.defaults.headers.common['Authorization'] = token;
+    // Add the 'Bearer ' prefix required by FastAPI
+    apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   } else {
     delete apiClient.defaults.headers.common['Authorization'];
   }

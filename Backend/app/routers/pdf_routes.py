@@ -5,10 +5,12 @@ import uuid
 import logging
 import fitz
 import hashlib
+import jwt  # Added for JWT verification
 from typing import List, Dict, Any
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Header
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Header, status
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import OAuth2PasswordBearer  # Added for OAuth2 scheme
 
 import azure.cognitiveservices.speech as speechsdk
 import pyttsx3
@@ -21,11 +23,12 @@ from app.services.session_manager import (
     create_session, get_session, add_message_to_history, 
     get_all_sessions_metadata_for_user, update_session, get_user
 )
+from app.core.auth import SECRET_KEY, ALGORITHM  # Import your JWT config
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["PDF Intelligence"])
 
-# ... (rest of your code stays exactly the same) ...
+# ... (TTS functions omitted to save space, copy text_to_speech_azure and text_to_speech_offline here if you use them!) ...
 
 SESSION_FILES_DIR = "session_files"
 os.makedirs(SESSION_FILES_DIR, exist_ok=True)
@@ -34,26 +37,41 @@ SUPPORTED_LANGUAGES = { "en": "English", "hi": "Hindi" }
 AZURE_VOICE_MAP = { "en": "en-US-JennyNeural", "hi": "hi-IN-SwaraNeural" }
 
 # --- Dependencies ---
+# Points to the login endpoint where users exchange credentials for a token
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
 async def get_current_user(
-    authorization: str = Header(default=None), 
+    token: str = Depends(oauth2_scheme), 
     x_microservice_key: str = Header(default=None, alias="x-microservice-key")
 ):
-    # 1. SPRING BOOT ENTRANCE (Primary)
-    # If React sends the logged-in user's email, we trust that Spring Boot 
-    # already authenticated them. We return the email so FastAPI can save 
-    # the PDFs in a folder named after this specific user!
-    if authorization:
-        return {"email": authorization, "name": "Spring Boot User"}
-
-    # 2. VIP ENTRANCE (Fallback)
+    # 1. VIP ENTRANCE (Fallback for internal system calls)
     expected_key = os.environ.get("MICROSERVICE_API_KEY", "my_super_secret_dashboard_key_123")
-    if x_microservice_key == expected_key:
+    if x_microservice_key and x_microservice_key == expected_key:
         return {"email": "microservice@dashboard.local", "name": "Dashboard System"}
 
-    # 3. REJECTION
-    raise HTTPException(status_code=401, detail="No authentication headers provided by frontend.")
+    # 2. JWT VERIFICATION (Primary)
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    try:
+        # Decode the token using the secret key and algorithm
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        
+        if email is None:
+            raise credentials_exception
+            
+        # Return the validated user profile (Name updated per project requirements)
+        return {"email": email, "name": "Akshit Kumar Bansal"}
+        
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
+    except jwt.InvalidTokenError:
+        raise credentials_exception
 
-# (I am omitting the TTS functions to save space, copy text_to_speech_azure and text_to_speech_offline here if you use them!)
 
 # --- Endpoints ---
 @router.post("/analyze/")

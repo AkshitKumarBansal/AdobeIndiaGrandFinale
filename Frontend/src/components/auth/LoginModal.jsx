@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { CloseIcon } from '../common/Icons';
-import apiClient from '../../api/apiClient';
+import apiClient, { setAuthToken } from '../../api/apiClient'; // Import setAuthToken
 
 const LoginModal = ({ isOpen, onClose, onLogin }) => {
     const [isSignup, setIsSignup] = useState(false);
@@ -16,14 +16,30 @@ const LoginModal = ({ isOpen, onClose, onLogin }) => {
         const name = e.target.elements.name?.value;
 
         try {
+            // Registration usually accepts a standard JSON payload (Pydantic model)
             if (isSignup) {
                 await apiClient.post('/register', { email, password, name });
-                const response = await apiClient.post('/login', { email, password });
-                onLogin(response.data.user_name, response.data.access_token);
-            } else {
-                const response = await apiClient.post('/login', { email, password });
-                onLogin(response.data.user_name, response.data.access_token);
             }
+
+            // FastAPI's OAuth2 strictly requires Form Data and 'username'
+            const loginFormData = new URLSearchParams();
+            loginFormData.append('username', email); 
+            loginFormData.append('password', password);
+
+            const response = await apiClient.post('/login', loginFormData, {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+            });
+
+            const { access_token, user_name } = response.data;
+
+            // 1. Configure Axios to use the new token for all future requests
+            setAuthToken(access_token);
+            
+            // 2. Pass the data to the parent context (fallback name added just in case!)
+            onLogin(user_name || "Akshit Kumar Bansal", access_token);
+            
             onClose();
         } catch (err) {
             setError(err.response?.data?.detail || 'An error occurred.');
