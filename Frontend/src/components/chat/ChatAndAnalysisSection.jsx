@@ -19,24 +19,56 @@ const ChatAndAnalysisSection = ({
 
   const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const [translationError, setTranslationError] = useState('');
+  
+  // 1. Track local translations and a manual override to force English
+  const [localTranslated, setLocalTranslated] = useState(null);
+  const [forceEnglish, setForceEnglish] = useState(false);
 
   useEffect(() => {
     if (insightsPanelRef.current) insightsPanelRef.current.scrollTop = 0;
-  }, [analysisResult, translatedInsights, selectionInsights, activeTab]);
+  }, [analysisResult, translatedInsights, selectionInsights, activeTab, localTranslated]);
 
   const handleTranslateToHindi = async () => {
     if (!sessionId) return;
     setIsTranslatingAll(true);
     setTranslationError('');
+    setForceEnglish(false); // Clear the English override
+    
     try {
-        const response = await apiClient.post('/translate-insights/', { sessionId });
-        setTranslatedInsights(response.data.translated_insights);
+        const response = await apiClient.post('/translate-insights/', { sessionId });        
+        let rawData = response.data.translated_analysis || response.data.translated_insights || response.data;        
+        
+        if (typeof rawData === 'string') {
+            try { rawData = JSON.parse(rawData); } catch (e) {}
+        }
+        
+        const extractedInsights = rawData.llm_insights || rawData;        
+        
+        const mergedInsights = {
+            ...analysisResult?.llm_insights,
+            ...extractedInsights
+        };
+        
+        setLocalTranslated(mergedInsights);
+        
+        if (typeof setTranslatedInsights === 'function') {
+            setTranslatedInsights(mergedInsights);
+        }
+        
     } catch (err) {
         setTranslationError('Failed to translate insights to Hindi.');
         console.error("Translation error:", err);
     } finally {
         setIsTranslatingAll(false);
     }
+  };
+
+  const handleShowOriginal = () => {
+      setForceEnglish(true); // Force the UI back to English
+      setLocalTranslated(null);
+      if (typeof setTranslatedInsights === 'function') {
+          setTranslatedInsights(null);
+      }
   };
 
   const handleGeneratePodcast = async () => {
@@ -61,7 +93,12 @@ const ChatAndAnalysisSection = ({
     }
   };
 
-  const displayInsights = translatedInsights || analysisResult?.llm_insights;
+  // 2. Identify the active translation (Checking local state OR directly from the refreshed backend session!)
+  const activeTranslationData = forceEnglish ? null : (localTranslated || translatedInsights || analysisResult?.translated_analysis);
+  
+  // 3. Extract BOTH the llm_insights and the top_sections so the entire page translates
+  const displayInsights = activeTranslationData?.llm_insights || activeTranslationData || analysisResult?.llm_insights;
+  const displayTopSections = activeTranslationData?.top_sections || analysisResult?.top_sections;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -84,7 +121,8 @@ const ChatAndAnalysisSection = ({
             {activeTab === 'analysis' && analysisResult && (
                 <div style={styles.analysisResult}>
                     <h4 style={{marginBottom: "0rem", marginTop: "0.2rem"}}>Initial Insights:</h4>
-                      {analysisResult.top_sections?.slice(0, 5).map((section, idx) => (
+                      {/* 4. Map over displayTopSections so they translate too! */}
+                      {displayTopSections?.slice(0, 5).map((section, idx) => (
                           <div key={idx} style={styles.analysisSnippet} onClick={() => onInsightClick(section)}>
                               <p style={styles.analysisReason}><strong>From {section.document}:</strong> {section.reasoning}</p>
                               <p style={styles.sectionTitleText}>Section: "{section.section_title}"</p>
@@ -95,7 +133,7 @@ const ChatAndAnalysisSection = ({
                           </div>
                       ))}
 
-                    {analysisResult.llm_insights && (
+                    {displayInsights && (
                         <div style={styles.llmInsightsContainer}>
                             <div style={styles.insightsHeader}>
                                 <h4 style={{ display: "flex", alignItems: "center", gap: "0.4rem", margin: "0rem", fontSize: "1.1rem", fontWeight: "600" }}>
@@ -103,8 +141,9 @@ const ChatAndAnalysisSection = ({
                                 </h4>
                                 <div style={styles.translateAllContainer}>
                                     {isTranslatingAll && <span style={{fontSize: '0.9rem', marginRight: '8px'}}>Translating...</span>}
-                                    {translatedInsights ? (
-                                        <button onClick={() => setTranslatedInsights(null)} style={styles.showOriginalButton}>Show Original</button>
+                                    {/* 5. The button relies on activeTranslationData to flip correctly */}
+                                    {activeTranslationData ? (
+                                        <button onClick={handleShowOriginal} style={styles.showOriginalButton}>Show Original</button>
                                     ) : (
                                         <button onClick={handleTranslateToHindi} style={styles.button} disabled={isTranslatingAll || loading}>
                                             Translate to Hindi

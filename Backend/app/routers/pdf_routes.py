@@ -4,6 +4,7 @@ import time
 import uuid
 import logging
 import fitz
+import hashlib
 from typing import List, Dict, Any
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Header
@@ -60,30 +61,75 @@ async def analyze_documents(files: List[UploadFile] = File(...), persona: str = 
     user_email = current_user['email']
     user_files_dir = os.path.join(SESSION_FILES_DIR, user_email)
     os.makedirs(user_files_dir, exist_ok=True)
-    context_parts, processed_filenames = [], set()
+    
+    context_parts = []
+    processed_filenames = set()
+    cached_analysis_result = None  # Store cache hit here
+    
+    redis = get_redis_client()
     
     for file in files:
         if file.filename in processed_filenames: continue
         try:
             file_bytes = await file.read()
+            
+            # 1. Generate a unique MD5 hash (Included persona for accuracy!)
+            file_hash = hashlib.md5(file_bytes).hexdigest()
+            cache_key = f"pdf_analysis:{file_hash}_{job_to_be_done}_{persona}"
+            
+            # 2. Check Redis for existing analysis
+            cached_data = redis.get(cache_key)
+            
+            if cached_data:
+                print(f"🚀 CACHE HIT! Returning instant insights for {file.filename}")
+                cached_analysis_result = json.loads(cached_data)
+                processed_filenames.add(file.filename)
+                continue # Skip reading the PDF text
+
+            # 3. If no cache, proceed with normal PDF reading
             file_location = os.path.join(user_files_dir, file.filename)
             with open(file_location, "wb+") as file_object: file_object.write(file_bytes)
             with fitz.open(stream=file_bytes, filetype="pdf") as doc:
                 for page_num, page in enumerate(doc, start=1):
-                    context_parts.append(f"--- START OF PAGE {page_num} in {file.filename} ---\n{page.get_text()}\n--- END OF PAGE {page_num} in {file.filename} ---\n")
+                    context_parts.append(f"--- START OF PAGE {page_num} ---\n{page.get_text()}\n")
             processed_filenames.add(file.filename)
+            
+            # 4. Save a flag to cache the result later
+            file.file_hash_for_cache = cache_key
+            
         except Exception as e: 
             print(f"\n--- PDF PROCESSING ERROR ---")
             print(f"Failed on {file.filename}: {str(e)}")
             print(f"----------------------------\n")
             raise HTTPException(status_code=400, detail=f"Could not process file: {file.filename}")
         
-    if not context_parts: raise HTTPException(status_code=400, detail="No content available.")
+    # --- LOGIC BRANCHING ---
+    if cached_analysis_result and not context_parts:
+        # We got everything we needed from the cache! No need to call Gemini.
+        analysis_result = cached_analysis_result
+    elif not context_parts:
+        # No cache hit AND no text extracted = error.
+        raise HTTPException(status_code=400, detail="No content available.")
+    else:
+        # We extracted new text, time to call Gemini!
+        full_text_context = "\n".join(context_parts)
+        analysis_result = await generate_connected_analysis(full_text_context, persona, job_to_be_done)
+        
+        # Save the new Gemini analysis to Redis for future cache hits
+        for file in files:
+            if hasattr(file, 'file_hash_for_cache'):
+                redis.setex(file.file_hash_for_cache, 86400, json.dumps(analysis_result))
     
-    full_text_context = "\n".join(context_parts)
-    analysis_result = await generate_connected_analysis(full_text_context, persona, job_to_be_done)
+    # --- FINALIZE METADATA ---
     file_path_map = {filename: f"/session_files/{user_email}/{filename}" for filename in processed_filenames}
-    analysis_result["metadata"] = {"input_documents": list(processed_filenames),"persona": persona,"job_to_be_done": job_to_be_done,"processing_timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),"file_path_map": file_path_map,"user_id": user_email}
+    analysis_result["metadata"] = {
+        "input_documents": list(processed_filenames),
+        "persona": persona,
+        "job_to_be_done": job_to_be_done,
+        "processing_timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "file_path_map": file_path_map,
+        "user_id": user_email
+    }
     
     if sessionId:
         update_session(sessionId, analysis_result)

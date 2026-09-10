@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const apiClient = axios.create({
-  baseURL: process.env.NODE_ENV === 'production' ? '' : 'http://localhost:8000',
+  baseURL: import.meta.env.MODE === 'production' ? '' : 'http://localhost:8000',
 });
 
 // Function to set the authorization token for all subsequent requests

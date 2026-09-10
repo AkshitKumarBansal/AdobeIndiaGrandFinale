@@ -13,3 +13,6 @@ pyttsx3
 redis
 bcrypt 
 langchain-google-genai
+sqlalchemy
+pymysql
+cryptography

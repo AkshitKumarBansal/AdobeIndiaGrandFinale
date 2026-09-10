@@ -1,7 +1,3 @@
-"""
-Main Application Entry Point
-Author: Akshit Kumar Bansal
-"""
 import os
 import logging
 from fastapi import FastAPI
@@ -14,8 +10,13 @@ from dotenv import load_dotenv
 from app.routers import auth_routes, pdf_routes
 from app.services.redis_client import get_redis_client
 
+from app.core.database import engine, Base
+from app.models.user import User
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
+
+Base.metadata.create_all(bind=engine)
 
 # --- Initialize FastAPI App ---
 app = FastAPI(
