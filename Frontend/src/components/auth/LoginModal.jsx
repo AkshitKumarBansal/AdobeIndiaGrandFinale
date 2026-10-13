@@ -18,7 +18,7 @@ const LoginModal = ({ isOpen, onClose, onLogin }) => {
         try {
             // Registration usually accepts a standard JSON payload (Pydantic model)
             if (isSignup) {
-                await apiClient.post('/register', { email, password, name });
+                await apiClient.post('/auth/register', { email, password, name });
             }
 
             // FastAPI's OAuth2 strictly requires Form Data and 'username'
@@ -26,7 +26,7 @@ const LoginModal = ({ isOpen, onClose, onLogin }) => {
             loginFormData.append('username', email); 
             loginFormData.append('password', password);
 
-            const response = await apiClient.post('/login', loginFormData, {
+            const response = await apiClient.post('/auth/login', loginFormData, {
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
                 },

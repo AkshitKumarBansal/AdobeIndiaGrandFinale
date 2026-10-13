@@ -5,12 +5,13 @@ import uuid
 import logging
 import fitz
 import hashlib
-import jwt  # Added for JWT verification
-from typing import List, Dict, Any
+import secrets  # For constant-time key comparison
+import jwt
+from typing import List, Dict, Any, Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Header, status
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.security import OAuth2PasswordBearer  # Added for OAuth2 scheme
+from fastapi.security import OAuth2PasswordBearer
 
 import azure.cognitiveservices.speech as speechsdk
 import pyttsx3
@@ -23,7 +24,12 @@ from app.services.session_manager import (
     create_session, get_session, add_message_to_history, 
     get_all_sessions_metadata_for_user, update_session, get_user
 )
-from app.core.auth import SECRET_KEY, ALGORITHM  # Import your JWT config
+from app.core.auth import SECRET_KEY, ALGORITHM
+
+# --- Environment Invariants (Fail-Fast at Startup) ---
+MICROSERVICE_API_KEY = os.environ.get("MICROSERVICE_API_KEY")
+if not MICROSERVICE_API_KEY:
+    raise ValueError("FATAL: MICROSERVICE_API_KEY is missing. Check your .env file.")
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["PDF Intelligence"])
@@ -33,38 +39,43 @@ router = APIRouter(tags=["PDF Intelligence"])
 SESSION_FILES_DIR = "session_files"
 os.makedirs(SESSION_FILES_DIR, exist_ok=True)
 
-SUPPORTED_LANGUAGES = { "en": "English", "hi": "Hindi" }
-AZURE_VOICE_MAP = { "en": "en-US-JennyNeural", "hi": "hi-IN-SwaraNeural" }
+SUPPORTED_LANGUAGES = {"en": "English", "hi": "Hindi"}
+AZURE_VOICE_MAP = {"en": "en-US-JennyNeural", "hi": "hi-IN-SwaraNeural"}
 
 # --- Dependencies ---
-# Points to the login endpoint where users exchange credentials for a token
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# auto_error=False allows requests authenticated via x-microservice-key without forcing a Bearer token
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 async def get_current_user(
-    token: str = Depends(oauth2_scheme), 
-    x_microservice_key: str = Header(default=None, alias="x-microservice-key")
+    token: Optional[str] = Depends(oauth2_scheme), 
+    x_microservice_key: Optional[str] = Header(default=None, alias="x-microservice-key")
 ):
-    # 1. VIP ENTRANCE (Fallback for internal system calls)
-    expected_key = os.environ.get("MICROSERVICE_API_KEY", "my_super_secret_dashboard_key_123")
-    if x_microservice_key and x_microservice_key == expected_key:
-        return {"email": "microservice@dashboard.local", "name": "Dashboard System"}
+    # 1. VIP ENTRANCE (Microservice System Calls)
+    if x_microservice_key:
+        if secrets.compare_digest(x_microservice_key, MICROSERVICE_API_KEY):
+            return {"email": "microservice@dashboard.local", "name": "Dashboard System"}
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid microservice API key",
+        )
 
-    # 2. JWT VERIFICATION (Primary)
+    # 2. JWT VERIFICATION (Standard User Calls)
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     
+    if not token:
+        raise credentials_exception
+
     try:
-        # Decode the token using the secret key and algorithm
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         
-        if email is None:
+        if not email:
             raise credentials_exception
             
-        # Return the validated user profile (Name updated per project requirements)
         return {"email": email, "name": "Akshit Kumar Bansal"}
         
     except jwt.ExpiredSignatureError:
@@ -75,23 +86,30 @@ async def get_current_user(
 
 # --- Endpoints ---
 @router.post("/analyze/")
-async def analyze_documents(files: List[UploadFile] = File(...), persona: str = Form(...), job_to_be_done: str = Form(...), sessionId: str = Form(None), current_user: dict = Depends(get_current_user)):
+async def analyze_documents(
+    files: List[UploadFile] = File(...), 
+    persona: str = Form(...), 
+    job_to_be_done: str = Form(...), 
+    sessionId: str = Form(None), 
+    current_user: dict = Depends(get_current_user)
+):
     user_email = current_user['email']
     user_files_dir = os.path.join(SESSION_FILES_DIR, user_email)
     os.makedirs(user_files_dir, exist_ok=True)
     
     context_parts = []
     processed_filenames = set()
-    cached_analysis_result = None  # Store cache hit here
+    cached_analysis_result = None
     
     redis = get_redis_client()
     
     for file in files:
-        if file.filename in processed_filenames: continue
+        if file.filename in processed_filenames: 
+            continue
         try:
             file_bytes = await file.read()
             
-            # 1. Generate a unique MD5 hash (Included persona for accuracy!)
+            # 1. Generate unique MD5 hash for cached context
             file_hash = hashlib.md5(file_bytes).hexdigest()
             cache_key = f"pdf_analysis:{file_hash}_{job_to_be_done}_{persona}"
             
@@ -102,17 +120,18 @@ async def analyze_documents(files: List[UploadFile] = File(...), persona: str = 
                 print(f"🚀 CACHE HIT! Returning instant insights for {file.filename}")
                 cached_analysis_result = json.loads(cached_data)
                 processed_filenames.add(file.filename)
-                continue # Skip reading the PDF text
+                continue
 
-            # 3. If no cache, proceed with normal PDF reading
+            # 3. If no cache, process PDF text
             file_location = os.path.join(user_files_dir, file.filename)
-            with open(file_location, "wb+") as file_object: file_object.write(file_bytes)
+            with open(file_location, "wb+") as file_object: 
+                file_object.write(file_bytes)
             with fitz.open(stream=file_bytes, filetype="pdf") as doc:
                 for page_num, page in enumerate(doc, start=1):
                     context_parts.append(f"--- START OF PAGE {page_num} ---\n{page.get_text()}\n")
             processed_filenames.add(file.filename)
             
-            # 4. Save a flag to cache the result later
+            # 4. Attach flag to cache result later
             file.file_hash_for_cache = cache_key
             
         except Exception as e: 
@@ -123,17 +142,13 @@ async def analyze_documents(files: List[UploadFile] = File(...), persona: str = 
         
     # --- LOGIC BRANCHING ---
     if cached_analysis_result and not context_parts:
-        # We got everything we needed from the cache! No need to call Gemini.
         analysis_result = cached_analysis_result
     elif not context_parts:
-        # No cache hit AND no text extracted = error.
         raise HTTPException(status_code=400, detail="No content available.")
     else:
-        # We extracted new text, time to call Gemini!
         full_text_context = "\n".join(context_parts)
         analysis_result = await generate_connected_analysis(full_text_context, persona, job_to_be_done)
         
-        # Save the new Gemini analysis to Redis for future cache hits
         for file in files:
             if hasattr(file, 'file_hash_for_cache'):
                 redis.setex(file.file_hash_for_cache, 86400, json.dumps(analysis_result))
@@ -160,7 +175,8 @@ async def analyze_documents(files: List[UploadFile] = File(...), persona: str = 
 @router.post("/chat/")
 async def chat_with_documents(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     session_data = get_session(request.sessionId)
-    if not session_data: raise HTTPException(status_code=404, detail="Chat session not found.")
+    if not session_data: 
+        raise HTTPException(status_code=404, detail="Chat session not found.")
     add_message_to_history(request.sessionId, {"role": "user", "content": request.query})
     prompt = f"Context: {json.dumps(session_data['analysis'])}\n\nHistory: {session_data['chat_history']}\n\nUser Query: {request.query}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -176,7 +192,8 @@ async def get_sessions_list(current_user: dict = Depends(get_current_user)):
 @router.get("/sessions/{session_id}")
 async def get_session_details(session_id: str, current_user: dict = Depends(get_current_user)):
     session_data = get_session(session_id)
-    if not session_data: raise HTTPException(status_code=404, detail="Session not found.")
+    if not session_data: 
+        raise HTTPException(status_code=404, detail="Session not found.")
     return JSONResponse(content=session_data)
 
 @router.post("/translate-insights/")
@@ -202,7 +219,6 @@ async def translate_insights(request: TranslateInsightsRequest, current_user: di
         response_json = await call_gemini_api(payload)
         translated_insights = json.loads(response_json['candidates'][0]['content']['parts'][0]['text'])
         
-        # Update the session with the new translated data
         session_data["translated_analysis"] = translated_insights
         update_session(request.sessionId, session_data)
         
